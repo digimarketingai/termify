@@ -25,7 +25,7 @@ AI-powered bilingual terminology extractor for parallel texts. Extract Chinese-E
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/termify.git
+git clone https://github.com/digimarketingai/termify.git
 cd termify
 
 # Install dependencies
