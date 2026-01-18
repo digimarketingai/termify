@@ -20,10 +20,10 @@ def get_client(token=""):
 
 # Configuration constants
 MAX_CHARS = 20000
-CHUNK_SIZE = 1500
+CHUNK_SIZE = 2000  # Increased chunk size for better context
 
 
-def smart_chunk(text, size=1500):
+def smart_chunk(text, size=2000):
     """Split text into chunks using paragraph boundaries."""
     if not text or len(text) <= size:
         return [text] if text else []
@@ -99,6 +99,10 @@ def parse_terms(content):
                     tgt = str(item.get('target', item.get('translation', ''))).strip()
                     cat = str(item.get('category', 'general')).strip().lower()
                     
+                    # Skip null-like values
+                    if not tgt or tgt.lower() in ['null', 'none', 'n/a', 'undefined']:
+                        continue
+                    
                     if src == tgt and re.match(r'^[A-Za-z\s]+$', src):
                         continue
                     if any(x in src.lower() for x in ['extract', 'priority', 'category', 'include', 'skip', 'rules']):
@@ -116,6 +120,10 @@ def parse_terms(content):
             if obj.get('source'):
                 src = str(obj.get('source', '')).strip()
                 tgt = str(obj.get('target', '')).strip()
+                
+                # Skip null-like values
+                if not tgt or tgt.lower() in ['null', 'none', 'n/a', 'undefined']:
+                    continue
                 
                 if src == tgt and re.match(r'^[A-Za-z\s]+$', src):
                     continue
@@ -206,57 +214,60 @@ def get_focus_instruction(focus):
 def extract_chunk_custom(source, target, custom_prompt, client):
     """
     Extract terms using custom user prompt - follows user instructions directly.
+    Improved to better match translations from parallel target text.
     """
     if target:
-        max_target = min(len(target), 3000 - len(source))
+        max_target = min(len(target), 4000 - len(source))
         target_truncated = target[:max_target]
         
-        prompt = f"""You are a bilingual terminology extractor. Follow the user's specific instructions.
+        prompt = f"""You are a bilingual terminology extractor working with PARALLEL Chinese-English texts (they are translations of each other).
 
-<source_text>
+<source_chinese>
 {source}
-</source_text>
+</source_chinese>
 
-<target_text>
+<target_english>
 {target_truncated}
-</target_text>
+</target_english>
 
 USER INSTRUCTION: {custom_prompt}
 
-Based on the user's instruction above, extract the requested terms from the texts.
-Output ONLY a JSON array in this format:
-[{{"source":"來源術語","target":"target term","category":"type"}}]
+CRITICAL MATCHING RULES:
+1. Follow the user's instruction to identify WHICH terms to extract from the Chinese text
+2. For EVERY Chinese term, you MUST find its EXACT English translation from the target_english text above
+3. The texts are parallel translations - every Chinese term HAS a corresponding English term in the English text
+4. Search carefully in the English text - the translation IS there
+5. NEVER use "null", "N/A", or leave target empty
 
-Important:
-- Follow the user's instruction precisely
-- If user asks for specific types of terms, only extract those
-- Match source terms with their translations from the target text
-- Use appropriate categories: medical, organization, place, social, technical, chemical, date, name, general"""
+EXAMPLES of correct matching:
+- 地政總署 → "Lands Department" (find it in English text)
+- 渠務署 → "Drainage Services Department" (find it in English text)
+- 葵青民政事務處 → "Kwai Tsing District Office" (find it in English text)
+- 衞生防護中心 → "Centre for Health Protection" (find it in English text)
+
+Output ONLY a JSON array with terms you found AND their English translations from the text:
+[{{"source":"中文術語","target":"English from target text","category":"category"}}]"""
 
     else:
-        prompt = f"""You are a bilingual terminology extractor. Follow the user's specific instructions.
+        prompt = f"""You are a bilingual terminology extractor.
 
-<text>
+<chinese_text>
 {source}
-</text>
+</chinese_text>
 
 USER INSTRUCTION: {custom_prompt}
 
-Based on the user's instruction above, extract the requested terms from the text.
-Output ONLY a JSON array in this format:
-[{{"source":"來源術語","target":"English translation","category":"type"}}]
+Based on the user's instruction, extract the requested terms and provide accurate English translations.
+NEVER use "null" - always provide a real English translation.
 
-Important:
-- Follow the user's instruction precisely
-- If user asks for specific types of terms, only extract those
-- Provide accurate translations for extracted terms
-- Use appropriate categories: medical, organization, place, social, technical, chemical, date, name, general"""
+Output ONLY a JSON array:
+[{{"source":"中文術語","target":"English translation","category":"type"}}]"""
 
     try:
         resp = client.chat.completions.create(
             model="mistral-small-latest",
             messages=[
-                {"role": "system", "content": "You are a precise terminology extractor. Follow user instructions exactly. Output only valid JSON arrays."},
+                {"role": "system", "content": "You are a precise bilingual terminology extractor. When given parallel texts, you MUST match Chinese terms with their English translations from the English text. The English translation is ALWAYS present in the parallel text - search carefully. NEVER output null or empty translations."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
@@ -278,10 +289,10 @@ def extract_chunk(source, target, focus, client):
     term_target = "40-60"
     
     if target:
-        max_target = min(len(target), 3000 - len(source))
+        max_target = min(len(target), 4000 - len(source))
         target_truncated = target[:max_target]
         
-        prompt = f"""You are a bilingual terminology extractor. Extract Chinese-English term pairs from the parallel texts below.
+        prompt = f"""You are a bilingual terminology extractor. Extract Chinese-English term pairs from these PARALLEL texts (they are translations of each other).
 
 <source_chinese>
 {source}
@@ -293,16 +304,17 @@ def extract_chunk(source, target, focus, client):
 
 Instructions:
 - Extract {term_target} terminology pairs
-- Match Chinese terms with their English translations from the texts
+- Match Chinese terms with their English translations FROM THE ENGLISH TEXT ABOVE
 - Include: proper nouns, technical terms, organizations, places, dates/times, chemicals, medical terms
 - {focus_instruction if focus_instruction else "Extract all types of terminology"}
+- NEVER use "null" - the English translation is in the target text
 - Use categories: medical, organization, place, social, technical, chemical, date, general
 
-Output ONLY a JSON array like this:
-[{{"source":"中文術語","target":"English term","category":"type"}}]"""
+Output ONLY a JSON array:
+[{{"source":"中文術語","target":"English term from text","category":"type"}}]"""
 
     else:
-        prompt = f"""You are a bilingual terminology extractor. Extract key Chinese terms with English translations from the text below.
+        prompt = f"""You are a bilingual terminology extractor. Extract key Chinese terms with English translations.
 
 <chinese_text>
 {source}
@@ -312,16 +324,17 @@ Instructions:
 - Extract {term_target} terms with accurate English translations
 - Include: proper nouns, technical terms, organizations, places, dates/times, chemicals, medical terms
 - {focus_instruction if focus_instruction else "Extract all types of terminology"}
+- NEVER use "null" - always provide real translations
 - Use categories: medical, organization, place, social, technical, chemical, date, general
 
-Output ONLY a JSON array like this:
+Output ONLY a JSON array:
 [{{"source":"中文術語","target":"English term","category":"type"}}]"""
 
     try:
         resp = client.chat.completions.create(
             model="mistral-small-latest",
             messages=[
-                {"role": "system", "content": "You extract terminology from texts. Output only valid JSON arrays. Never include instruction text in your output."},
+                {"role": "system", "content": "You extract terminology from texts. Output only valid JSON arrays. Never include instruction text in output. Never use null for translations."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
@@ -358,22 +371,32 @@ def validate_terms(terms):
         r'^[\d\.\s]+$',
     ]
     
+    invalid_targets = ['null', 'none', 'n/a', 'undefined', 'nil', '']
+    
     for t in terms:
         src = t['source'].strip()
-        tgt = t['target'].strip()
+        tgt = t['target'].strip() if t.get('target') else ''
         
+        # Skip if source or target is empty/null
         if not src or not tgt:
             continue
         
+        # Skip if target is a null-like value
+        if tgt.lower() in invalid_targets:
+            continue
+        
+        # Skip if source equals target and it's just English text
         if src.lower() == tgt.lower() and re.match(r'^[A-Za-z0-9\s\-]+$', src):
-            if len(src) <= 6 or src.upper() == src:
+            if len(src) <= 6 or src.upper() == src:  # Allow acronyms
                 pass
             else:
                 continue
         
+        # Skip garbage patterns in source
         if any(re.search(p, src.lower()) for p in garbage_patterns[1:2]):
             continue
         
+        # Skip long English-only source
         if re.match(r'^[A-Za-z\s]{10,}$', src):
             continue
             
