@@ -610,7 +610,7 @@ with gr.Blocks(title="Termify - Terminology Extractor", theme=gr.themes.Soft()) 
     
     gr.Markdown("# 🔤 Termify")
     gr.Markdown("**AI-powered bilingual terminology extractor** | 智能雙語術語提取工具")
-    gr.Markdown("*Powered by Mistral AI* | *By [digimarketingai](https://github.com/digimarketingai/termify)*")
+    gr.Markdown("*Powered by Mistral AI*")
     
     with gr.Row():
         with gr.Column():
